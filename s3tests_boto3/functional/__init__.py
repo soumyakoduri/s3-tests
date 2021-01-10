@@ -9,6 +9,7 @@ import munch
 import random
 import string
 import itertools
+import re
 
 config = munch.Munch
 
@@ -106,6 +107,16 @@ def get_delete_markers_list(bucket, client=None):
 
     return delete_markers
 
+def configured_storage_classes():
+    sc = [ 'STANDARD' ]
+
+    extra_sc = re.split('\W+', config.storage_classes)
+
+    for item in extra_sc:
+        if item != 'STANDARD':
+             sc.append(item)
+
+    return sc
 
 def nuke_prefixed_buckets(prefix, client=None):
     if client == None:
@@ -193,6 +204,12 @@ def setup():
         config.main_api_name = ""
         pass
 
+    try:
+        config.storage_classes = cfg.get('s3 main',"storage_classes")
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        config.storage_classes = ""
+        pass
+
     config.alt_access_key = cfg.get('s3 alt',"access_key")
     config.alt_secret_key = cfg.get('s3 alt',"secret_key")
     config.alt_display_name = cfg.get('s3 alt',"display_name")
@@ -242,6 +259,52 @@ def check_webidentity():
     config.webidentity_aud = cfg.get('webidentity', "aud")
     config.webidentity_token = cfg.get('webidentity', "token")
     config.webidentity_realm = cfg.get('webidentity', "KC_REALM")
+
+def check_cloud_config():
+    cfg = configparser.RawConfigParser()
+    try:
+        path = os.environ['S3TEST_CONF']
+    except KeyError:
+        raise RuntimeError(
+            'To run tests, point environment '
+            + 'variable S3TEST_CONF to a config file.',
+            )
+    cfg.read(path)
+    if not cfg.has_section("s3 cloud"):
+        raise RuntimeError('Your config file is missing the "s3 cloud" section!')
+
+    config.cloud_host = cfg.get('s3 cloud',"host")
+    config.cloud_port = int(cfg.get('s3 cloud',"port"))
+    config.cloud_is_secure = cfg.getboolean('s3 cloud', "is_secure")
+
+    proto = 'https' if config.cloud_is_secure else 'http'
+    config.cloud_endpoint = "%s://%s:%d" % (proto, config.cloud_host, config.cloud_port)
+
+    config.cloud_access_key = cfg.get('s3 cloud',"access_key")
+    config.cloud_secret_key = cfg.get('s3 cloud',"secret_key")
+
+    config.cloud_storage_class = cfg.get('s3 cloud', "cloud_storage_class")
+    
+    try:
+        config.cloud_retain_object = cfg.get('s3 cloud',"retain_object")
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        config.cloud_retain_object = None
+
+    try:
+        config.cloud_target_path = cfg.get('s3 cloud',"target_path")
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        config.cloud_target_path = None
+
+    try:
+        config.cloud_target_storage_class = cfg.get('s3 cloud',"target_storage_class")
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        config.cloud_target_storage_class = 'STANDARD'
+
+    try:
+        config.cloud_regular_storage_class = cfg.get('s3 cloud', "storage_class")
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        config.cloud_regular_storage_class  = None
+
 
 def get_client(client_config=None):
     if client_config == None:
@@ -317,6 +380,18 @@ def get_alt_client(client_config=None):
                         aws_secret_access_key=config.alt_secret_key,
                         endpoint_url=config.default_endpoint,
                         use_ssl=config.default_is_secure,
+                        config=client_config)
+    return client
+
+def get_cloud_client(client_config=None):
+    if client_config == None:
+        client_config = Config(signature_version='s3v4')
+
+    client = boto3.client(service_name='s3',
+                        aws_access_key_id=config.cloud_access_key,
+                        aws_secret_access_key=config.cloud_secret_key,
+                        endpoint_url=config.cloud_endpoint,
+                        use_ssl=config.cloud_is_secure,
                         config=client_config)
     return client
 
@@ -514,3 +589,18 @@ def get_token():
 
 def get_realm_name():
     return config.webidentity_realm
+
+def get_cloud_storage_class():
+    return config.cloud_storage_class
+
+def get_cloud_retain_object():
+    return config.cloud_retain_object
+
+def get_cloud_regular_storage_class():
+    return config.cloud_regular_storage_class
+
+def get_cloud_target_path():
+    return config.cloud_target_path
+
+def get_cloud_target_storage_class():
+    return config.cloud_target_storage_class
